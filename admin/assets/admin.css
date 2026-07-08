@@ -1,0 +1,81 @@
+/* Hutch SMS Admin Styles */
+:root {
+    --hutch-orange: #e8530a;
+    --hutch-dark:   #1a1a2e;
+    --hutch-light:  #f8f9fa;
+    --hutch-border: #dee2e6;
+    --success:      #28a745;
+    --error:        #dc3545;
+    --warning:      #ffc107;
+}
+
+.hutch-wrap { max-width: 1100px; padding: 0 20px 40px; }
+.hutch-wrap h1 { display: flex; align-items: center; gap: 10px; }
+.hutch-wrap h1 .hutch-logo { color: var(--hutch-orange); font-size: 28px; font-weight: 900; letter-spacing: -1px; }
+
+/* ── Cards ─────────────────────────────────────────────── */
+.hutch-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; margin: 24px 0; }
+.hutch-card  { background: #fff; border: 1px solid var(--hutch-border); border-radius: 8px; padding: 20px 24px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+.hutch-card .card-label  { font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: #6c757d; margin-bottom: 6px; }
+.hutch-card .card-value  { font-size: 32px; font-weight: 700; color: var(--hutch-dark); line-height: 1; }
+.hutch-card .card-value.orange { color: var(--hutch-orange); }
+.hutch-card .card-value.green  { color: var(--success); }
+.hutch-card .card-value.red    { color: var(--error); }
+
+/* ── Section boxes ──────────────────────────────────────── */
+.hutch-box { background: #fff; border: 1px solid var(--hutch-border); border-radius: 8px; padding: 24px; margin-bottom: 24px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+.hutch-box h2 { margin: 0 0 16px; font-size: 15px; color: var(--hutch-dark); border-bottom: 2px solid var(--hutch-orange); padding-bottom: 8px; }
+
+/* ── Forms ──────────────────────────────────────────────── */
+.hutch-form table { width: 100%; }
+.hutch-form th    { width: 200px; }
+.hutch-form input[type=text],
+.hutch-form input[type=password],
+.hutch-form input[type=email],
+.hutch-form textarea,
+.hutch-form select { width: 100%; max-width: 500px; }
+.hutch-form textarea { height: 100px; resize: vertical; }
+.hutch-form .big-textarea { height: 150px; }
+
+/* ── Buttons ────────────────────────────────────────────── */
+.button-hutch { background: var(--hutch-orange) !important; color: #fff !important; border-color: #c44807 !important; font-weight: 600 !important; }
+.button-hutch:hover { background: #c44807 !important; }
+
+/* ── Log table ──────────────────────────────────────────── */
+.hutch-log-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.hutch-log-table th { background: var(--hutch-dark); color: #fff; padding: 10px 12px; text-align: left; }
+.hutch-log-table td { padding: 9px 12px; border-bottom: 1px solid var(--hutch-border); vertical-align: top; }
+.hutch-log-table tr:nth-child(even) td { background: #f9f9f9; }
+.hutch-log-table .cell-msg  { max-width: 250px; word-break: break-word; }
+.hutch-log-table .cell-resp { max-width: 200px; word-break: break-word; font-family: monospace; font-size: 11px; }
+
+/* ── Status badges ──────────────────────────────────────── */
+.badge         { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; text-transform: uppercase; }
+.badge-success { background: #d4edda; color: #155724; }
+.badge-error   { background: #f8d7da; color: #721c24; }
+.badge-pending { background: #fff3cd; color: #856404; }
+.badge-bulk    { background: #d1ecf1; color: #0c5460; }
+.badge-individual { background: #e2d9f3; color: #4a235a; }
+
+/* ── Debug textarea ─────────────────────────────────────── */
+.hutch-debug-log { width: 100%; height: 400px; font-family: monospace; font-size: 12px; background: #1a1a2e; color: #a8ff78; border: none; border-radius: 6px; padding: 16px; resize: vertical; }
+
+/* ── Version table ──────────────────────────────────────── */
+.hutch-version-table { width: 100%; border-collapse: collapse; }
+.hutch-version-table th { background: var(--hutch-orange); color: #fff; padding: 10px 16px; text-align: left; }
+.hutch-version-table td { padding: 10px 16px; border-bottom: 1px solid var(--hutch-border); }
+.hutch-version-table .current-version { background: #fff8f5; font-weight: 700; }
+
+/* ── Notices ────────────────────────────────────────────── */
+.hutch-notice { padding: 12px 16px; border-radius: 6px; margin-bottom: 20px; font-weight: 500; }
+.hutch-notice.success { background: #d4edda; color: #155724; border-left: 4px solid var(--success); }
+.hutch-notice.error   { background: #f8d7da; color: #721c24; border-left: 4px solid var(--error); }
+.hutch-notice.warning { background: #fff3cd; color: #856404; border-left: 4px solid var(--warning); }
+
+/* ── Token status ────────────────────────────────────────── */
+.token-status { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 6px; font-size: 13px; margin-top: 8px; }
+.token-status.valid   { background: #d4edda; color: #155724; }
+.token-status.expired { background: #f8d7da; color: #721c24; }
+.token-status .dot    { width: 10px; height: 10px; border-radius: 50%; }
+.token-status.valid .dot   { background: var(--success); }
+.token-status.expired .dot { background: var(--error); }
