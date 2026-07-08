@@ -181,11 +181,11 @@ $pluginever_active = class_exists( 'Hutch_SMS_Voucher' ) ? Hutch_SMS_Voucher::pl
                         <textarea id="hs-msg-voucher" name="hutch_sms_msg_voucher"
                                   class="sms-template" data-counter="counter-voucher" rows="3"><?php
                             echo esc_textarea( get_option('hutch_sms_msg_voucher',
-                                'Hi {first_name}, your gift voucher is: {serial}. Valid until: {expire_date}. Order #{order_id}. - Nadiyas') );
+                                'Hi {first_name}, your gift voucher is: {serial_key}. Valid until: {expire_date}. Order #{order_id}. - Nadiyas') );
                         ?></textarea>
                         <div class="sms-meta-row">
                             <span class="sms-placeholders">
-                                <code>{first_name}</code> <code>{serial}</code> <code>{product_name}</code>
+                                <code>{first_name}</code> <code>{serial_key}</code> <code>{product_name}</code>
                                 <code>{order_id}</code> <code>{expire_date}</code> <code>{validity}</code>
                             </span>
                             <span class="sms-counter" id="counter-voucher"></span>

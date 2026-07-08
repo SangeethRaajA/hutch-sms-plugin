@@ -183,8 +183,9 @@ class Hutch_SMS_Voucher {
         }
 
         return str_replace(
-            array( '{serial}', '{product_name}', '{order_id}', '{expire_date}', '{validity}', '{first_name}' ),
+            array( '{serial}', '{serial_key}', '{product_name}', '{order_id}', '{expire_date}', '{validity}', '{first_name}' ),
             array(
+                $serial['serial_key'],
                 $serial['serial_key'],
                 $item->get_name(),
                 $order->get_order_number(),
