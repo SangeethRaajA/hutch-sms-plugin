@@ -70,6 +70,12 @@ class Hutch_SMS_WooCommerce {
         // Only send for actual customer orders (not refunds/subscriptions)
         if ( ! in_array( $order->get_type(), array( 'shop_order' ), true ) ) return;
 
+        // Gift Voucher orders get their own SMS — skip confirmation SMS for them
+        if ( class_exists( 'Hutch_SMS_Voucher' ) && Hutch_SMS_Voucher::order_has_voucher( $order ) ) {
+            Hutch_SMS_Logger::debug( "[Order Confirm] Order $order_id — contains Gift Voucher, skipping (voucher SMS handles this)." );
+            return;
+        }
+
         $phone = self::get_phone( $order );
         if ( ! $phone ) {
             Hutch_SMS_Logger::debug( "[Order Confirm] Order $order_id — no valid phone. Raw: '" . $order->get_billing_phone() . "'" );
@@ -113,6 +119,12 @@ class Hutch_SMS_WooCommerce {
     public static function on_checkout_processed( $order_id, $posted_data, $order ) {
         if ( ! get_option( 'hutch_sms_enable_order_confirm', false ) ) return;
 
+        // Gift Voucher orders skip confirmation SMS
+        if ( class_exists( 'Hutch_SMS_Voucher' ) && Hutch_SMS_Voucher::order_has_voucher( $order ) ) {
+            Hutch_SMS_Logger::debug( "[Checkout] Order $order_id — contains Gift Voucher, skipping confirmation SMS." );
+            return;
+        }
+
         // Only fire for payment methods that won't trigger processing/payment_complete
         // (i.e. methods that leave order in pending or on-hold permanently)
         $payment_method = $order->get_payment_method();
@@ -136,6 +148,12 @@ class Hutch_SMS_WooCommerce {
 
         $order = self::load_order( $order_id );
         if ( ! $order ) return;
+
+        // Gift Voucher orders get their own SMS — skip completion SMS for them
+        if ( class_exists( 'Hutch_SMS_Voucher' ) && Hutch_SMS_Voucher::order_has_voucher( $order ) ) {
+            Hutch_SMS_Logger::debug( "[Order Complete] Order $order_id — contains Gift Voucher, skipping (voucher SMS handles this)." );
+            return;
+        }
 
         $phone = self::get_phone( $order );
         if ( ! $phone ) {

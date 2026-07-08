@@ -20,8 +20,6 @@ class Hutch_SMS_Admin {
         add_action( 'admin_post_hutch_sms_clear_logs',       array( __CLASS__, 'handle_clear_logs' ) );
         add_action( 'admin_post_hutch_sms_clear_debug',      array( __CLASS__, 'handle_clear_debug' ) );
         add_action( 'admin_post_hutch_sms_test_login',        array( __CLASS__, 'handle_test_login' ) );
-        add_action( 'admin_post_hutch_sms_test_order',        array( __CLASS__, 'handle_test_order' ) );
-        add_action( 'admin_post_hutch_sms_test_voucher',      array( __CLASS__, 'handle_test_voucher' ) );
         add_action( 'admin_post_hutch_sms_diagnose_order',    array( __CLASS__, 'handle_diagnose_order' ) );
     }
 
@@ -51,22 +49,15 @@ class Hutch_SMS_Admin {
         $opts = array(
             'hutch_sms_username', 'hutch_sms_password', 'hutch_sms_mask',
             'hutch_sms_debug',
-            'hutch_sms_offline_methods',
             // Order SMS
             'hutch_sms_enable_order_confirm', 'hutch_sms_enable_order_complete',
             'hutch_sms_msg_order_confirm', 'hutch_sms_msg_order_complete',
             // Voucher SMS
-            'hutch_sms_enable_voucher_sms', 'hutch_sms_voucher_category', 'hutch_sms_msg_voucher',
+            'hutch_sms_enable_voucher_sms', 'hutch_sms_msg_voucher',
         );
         foreach ( $opts as $opt ) {
             register_setting( 'hutch_sms_settings', $opt );
         }
-
-        // Wire the offline methods option into the WooCommerce class filter
-        add_filter( 'hutch_sms_offline_payment_methods', function() {
-            $raw = get_option( 'hutch_sms_offline_methods', 'bacs,cheque,cod' );
-            return array_filter( array_map( 'trim', explode( ',', $raw ) ) );
-        } );
     }
 
     // ──────────────────────────────────────────────────────────
@@ -266,147 +257,6 @@ class Hutch_SMS_Admin {
         Hutch_SMS_Logger::clear_debug_log();
         self::set_notice( 'success', 'Debug log cleared.' );
         wp_safe_redirect( admin_url( 'admin.php?page=hutch-sms-debug' ) ); exit;
-    }
-
-    public static function handle_test_order() {
-        check_admin_referer( 'hutch_sms_test_order' );
-        if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Unauthorized' );
-
-        $order_id      = (int) ( $_POST['test_order_id'] ?? 0 );
-        $override      = sanitize_text_field( $_POST['test_override_phone'] ?? '' );
-        $sms_type      = sanitize_key( $_POST['sms_type'] ?? 'confirm' );
-
-        $order = $order_id ? wc_get_order( $order_id ) : null;
-        if ( ! $order ) {
-            wp_safe_redirect( admin_url( 'admin.php?page=hutch-sms-settings&test_error=' . urlencode("Order #$order_id not found.") ) );
-            exit;
-        }
-
-        // Phone: override or order's billing phone
-        $phone = $override
-            ? Hutch_SMS_WooCommerce::normalise_phone( $override )
-            : Hutch_SMS_WooCommerce::get_phone( $order );
-
-        if ( ! $phone ) {
-            wp_safe_redirect( admin_url( 'admin.php?page=hutch-sms-settings&test_error=' . urlencode("No valid phone number for order #$order_id.") ) );
-            exit;
-        }
-
-        if ( $sms_type === 'complete' ) {
-            $template = get_option( 'hutch_sms_msg_order_complete',
-                'Hi {first_name}, your order #{order_id} has been completed. Thank you for shopping with us! - Nadiyas' );
-            $campaign = 'Order Completion (Test)';
-        } else {
-            $template = get_option( 'hutch_sms_msg_order_confirm',
-                'Hi {first_name}, thank you for your order #{order_id} of {total}. We are processing it now! - Nadiyas' );
-            $campaign = 'Order Confirmation (Test)';
-        }
-
-        $message = Hutch_SMS_WooCommerce::build_message( $template, $order );
-
-        $result = Hutch_SMS_API::send_sms( array(
-            'campaignName' => $campaign,
-            'mask'         => get_option( 'hutch_sms_mask', '' ),
-            'numbers'      => $phone,
-            'content'      => '[TEST] ' . $message,
-        ) );
-
-        if ( is_wp_error( $result ) ) {
-            wp_safe_redirect( admin_url( 'admin.php?page=hutch-sms-settings&test_error=' . urlencode( $result->get_error_message() ) ) );
-        } else {
-            wp_safe_redirect( admin_url( 'admin.php?page=hutch-sms-settings&test_sent=1&settings-updated=1' ) );
-        }
-        exit;
-    }
-
-    public static function handle_test_voucher() {
-        check_admin_referer( 'hutch_sms_test_voucher' );
-        if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Unauthorized' );
-
-        $order_id = (int) ( $_POST['test_order_id'] ?? 0 );
-        $override = sanitize_text_field( $_POST['test_override_phone'] ?? '' );
-
-        $order = $order_id ? wc_get_order( $order_id ) : null;
-        if ( ! $order ) {
-            wp_safe_redirect( admin_url( 'admin.php?page=hutch-sms-settings&test_error=' . urlencode("Order #$order_id not found.") ) );
-            exit;
-        }
-
-        $phone = $override
-            ? Hutch_SMS_WooCommerce::normalise_phone( $override )
-            : Hutch_SMS_WooCommerce::get_phone( $order );
-
-        if ( ! $phone ) {
-            wp_safe_redirect( admin_url( 'admin.php?page=hutch-sms-settings&test_error=' . urlencode("No valid phone for order #$order_id.") ) );
-            exit;
-        }
-
-        $voucher_cat = get_option( 'hutch_sms_voucher_category', 'gift-vouchers' );
-        $sent = 0;
-        $errors = array();
-
-        foreach ( $order->get_items() as $item_id => $item ) {
-            $product_id = (int) $item->get_product_id();
-            if ( ! Hutch_SMS_Voucher::product_is_voucher( $product_id, $voucher_cat ) ) continue;
-
-            // Use same serial lookup as real flow — via reflection to call private method
-            // We'll replicate the lookup logic here for the test
-            global $wpdb;
-            $table = $wpdb->prefix . 'wc_serial_numbers';
-            $rows  = array();
-
-            if ( $wpdb->get_var( "SHOW TABLES LIKE '$table'" ) === $table ) {
-                $rows = $wpdb->get_results( $wpdb->prepare(
-                    "SELECT * FROM `{$table}` WHERE order_id=%d AND product_id=%d ORDER BY id ASC",
-                    $order_id, $product_id
-                ), ARRAY_A );
-            }
-
-            if ( empty( $rows ) ) {
-                $errors[] = "No serials found in wp_wc_serial_numbers for order #$order_id, product #$product_id.";
-                continue;
-            }
-
-            foreach ( $rows as $serial ) {
-                $expire = $serial['expire_date'] ?? '';
-                if ( $expire && $expire !== '0000-00-00 00:00:00' ) {
-                    $expire = date( 'd M Y', strtotime( $expire ) );
-                } else {
-                    $expire = ! empty( $serial['validity'] ) ? $serial['validity'] : 'No expiry';
-                }
-
-                $template = get_option( 'hutch_sms_msg_voucher',
-                    'Hi {first_name}, your gift voucher is: {serial}. Valid until: {expire_date}. Order #{order_id}. - Nadiyas' );
-
-                $message = '[TEST] ' . str_replace(
-                    array( '{serial}', '{product_name}', '{order_id}', '{expire_date}', '{validity}', '{first_name}' ),
-                    array( $serial['serial_key'], $item->get_name(), $order->get_order_number(), $expire, $serial['validity'] ?: 'N/A', $order->get_billing_first_name() ),
-                    $template
-                );
-
-                $result = Hutch_SMS_API::send_sms( array(
-                    'campaignName' => 'Gift Voucher (Test)',
-                    'mask'         => get_option( 'hutch_sms_mask', '' ),
-                    'numbers'      => $phone,
-                    'content'      => $message,
-                ) );
-
-                if ( is_wp_error( $result ) ) {
-                    $errors[] = $result->get_error_message();
-                } else {
-                    $sent++;
-                }
-            }
-        }
-
-        if ( $errors && ! $sent ) {
-            wp_safe_redirect( admin_url( 'admin.php?page=hutch-sms-settings&test_error=' . urlencode( implode( ' | ', $errors ) ) ) );
-        } elseif ( $sent === 0 ) {
-            wp_safe_redirect( admin_url( 'admin.php?page=hutch-sms-settings&test_error=' . urlencode("No gift voucher products found in order #$order_id matching the '$voucher_cat' category.") ) );
-        } else {
-            wp_safe_redirect( admin_url( 'admin.php?page=hutch-sms-settings&test_sent=1&settings-updated=1' ) );
-        }
-        exit;
     }
 
     public static function handle_test_login() {
