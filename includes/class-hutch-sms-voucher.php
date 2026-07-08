@@ -115,22 +115,92 @@ class Hutch_SMS_Voucher {
     // ─────────────────────────────────────────────────────────────────
 
     private static function get_serials( int $order_id, int $item_id, int $product_id ): array {
-        // Try PluginEver v2+ Serial Object API first (returns decrypted keys)
+        // Log what PluginEver API surface is available on this install
+        self::log_pluginever_availability();
+
+        // Method 1: PluginEver public helper function (most reliable, returns decrypted)
+        $rows = self::get_via_helper_function( $order_id, $product_id );
+        if ( ! empty( $rows ) ) return $rows;
+
+        // Method 2: PluginEver v2+ namespaced Serial model
         $rows = self::get_via_serial_object_api( $order_id, $product_id );
         if ( ! empty( $rows ) ) return $rows;
 
-        // Try legacy WC_Serial_Numbers_Query API
+        // Method 3: Legacy WC_Serial_Numbers_Query API
         if ( class_exists( 'WC_Serial_Numbers_Query' ) ) {
             $rows = self::get_via_plugin_api( $order_id, $product_id );
             if ( ! empty( $rows ) ) return $rows;
         }
 
-        // Fallback: direct DB query + decrypt
-        return self::get_via_db( $order_id, $item_id, $product_id );
+        // Method 4: Direct DB query — get row IDs then fetch via PluginEver by ID
+        return self::get_via_db_then_fetch( $order_id, $item_id, $product_id );
     }
 
     /**
-     * PluginEver v2+ uses namespaced Serial model objects which return decrypted keys.
+     * Log which PluginEver classes/functions are available — helps diagnose installs.
+     * Only logs once per request via a static flag.
+     */
+    private static $logged_availability = false;
+    private static function log_pluginever_availability(): void {
+        if ( self::$logged_availability ) return;
+        self::$logged_availability = true;
+
+        $classes = array(
+            'WC_Serial_Numbers',
+            'WC_Serial_Numbers_Query',
+            'WC_Serial_Numbers_Encryption',
+            'WooCommerce_Serial_Numbers\Models\Serial',
+            'WooCommerce_Serial_Numbers\Encryption',
+            'WC_Serial_Numbers\Models\Serial',
+        );
+        $funcs = array(
+            'wc_serial_numbers_get_serial_number',
+            'wc_serial_numbers_get_serial_numbers',
+            'wc_serial_numbers_decrypt',
+        );
+
+        $found_classes = array_filter( $classes, 'class_exists' );
+        $found_funcs   = array_filter( $funcs,   'function_exists' );
+
+        Hutch_SMS_Logger::debug( '[Voucher] PluginEver classes available: ' . ( $found_classes ? implode( ', ', $found_classes ) : 'NONE' ) );
+        Hutch_SMS_Logger::debug( '[Voucher] PluginEver functions available: ' . ( $found_funcs ? implode( ', ', $found_funcs ) : 'NONE' ) );
+    }
+
+    /**
+     * PluginEver exposes wc_serial_numbers_get_serial_numbers() — returns decrypted objects.
+     */
+    private static function get_via_helper_function( int $order_id, int $product_id ): array {
+        if ( ! function_exists( 'wc_serial_numbers_get_serial_numbers' ) ) return array();
+
+        try {
+            $results = wc_serial_numbers_get_serial_numbers( array(
+                'order_id'   => $order_id,
+                'product_id' => $product_id,
+                'status'     => 'sold',
+                'limit'      => -1,
+            ) );
+
+            if ( empty( $results ) ) return array();
+
+            Hutch_SMS_Logger::debug( "[Voucher] wc_serial_numbers_get_serial_numbers: order=$order_id => " . count( $results ) . " rows." );
+
+            return array_map( function( $obj ) {
+                $arr = is_object( $obj ) ? (array) $obj : $obj;
+                // Try get_serial_key() method first (returns decrypted)
+                if ( is_object( $obj ) && method_exists( $obj, 'get_serial_key' ) ) {
+                    $arr['serial_key'] = $obj->get_serial_key();
+                }
+                return $arr;
+            }, $results );
+
+        } catch ( \Exception $e ) {
+            Hutch_SMS_Logger::debug( "[Voucher] wc_serial_numbers_get_serial_numbers error: " . $e->getMessage() );
+            return array();
+        }
+    }
+
+    /**
+     * PluginEver v2+ namespaced Serial model — returns decrypted keys.
      */
     private static function get_via_serial_object_api( int $order_id, int $product_id ): array {
         $classes = array(
@@ -154,7 +224,7 @@ class Hutch_SMS_Voucher {
                 'objects'
             );
             if ( empty( $results ) ) return array();
-            Hutch_SMS_Logger::debug( "[Voucher] Serial Object API: order=$order_id product=$product_id => " . count( $results ) . " rows." );
+            Hutch_SMS_Logger::debug( "[Voucher] Serial Object API ($class): order=$order_id => " . count( $results ) . " rows." );
             return array_map( function( $obj ) {
                 return array(
                     'serial_key'  => method_exists( $obj, 'get_serial_key' ) ? $obj->get_serial_key() : ( $obj->serial_key ?? '' ),
@@ -179,19 +249,28 @@ class Hutch_SMS_Voucher {
                 'return'     => 'all',
             ) );
             $results = $query->get_serial_numbers();
-            Hutch_SMS_Logger::debug( "[Voucher] PluginEver Legacy API: order=$order_id product=$product_id => " . count( $results ) . " rows." );
+            Hutch_SMS_Logger::debug( "[Voucher] WC_Serial_Numbers_Query: order=$order_id => " . count( $results ) . " rows." );
             $rows = array_map( fn( $r ) => is_object( $r ) ? (array) $r : $r, $results );
             foreach ( $rows as &$row ) {
-                $row['serial_key'] = self::decrypt_serial( $row['serial_key'] ?? '' );
+                if ( is_object( $row ) && method_exists( $row, 'get_serial_key' ) ) {
+                    $row['serial_key'] = $row->get_serial_key();
+                } else {
+                    $row['serial_key'] = self::decrypt_serial( $row['serial_key'] ?? '' );
+                }
             }
             return $rows;
         } catch ( \Exception $e ) {
-            Hutch_SMS_Logger::debug( "[Voucher] PluginEver Legacy API error: " . $e->getMessage() );
+            Hutch_SMS_Logger::debug( "[Voucher] WC_Serial_Numbers_Query error: " . $e->getMessage() );
             return array();
         }
     }
 
-    private static function get_via_db( int $order_id, int $item_id, int $product_id ): array {
+    /**
+     * Get rows from DB directly, then re-fetch each one via PluginEver's
+     * wc_serial_numbers_get_serial_number( $id ) which returns decrypted data.
+     * Falls back to decrypt_serial() if that function doesn't exist.
+     */
+    private static function get_via_db_then_fetch( int $order_id, int $item_id, int $product_id ): array {
         global $wpdb;
         $table = $wpdb->prefix . self::SERIAL_TABLE;
 
@@ -215,71 +294,120 @@ class Hutch_SMS_Voucher {
         }
 
         $sample = isset( $rows[0]['serial_key'] ) ? substr( $rows[0]['serial_key'], 0, 20 ) . '...' : 'none';
-        Hutch_SMS_Logger::debug( "[Voucher] DB query: order=$order_id => " . count( $rows ) . " rows. Raw sample: $sample. Error: " . ( $wpdb->last_error ?: 'none' ) );
+        Hutch_SMS_Logger::debug( "[Voucher] DB direct: order=$order_id => " . count( $rows ) . " rows. Raw sample: $sample. Error: " . ( $wpdb->last_error ?: 'none' ) );
 
-        // PluginEver stores serial_key encrypted — decrypt before use
+        if ( empty( $rows ) ) return array();
+
+        // Try to re-fetch each row by ID through PluginEver's function (returns decrypted)
+        if ( function_exists( 'wc_serial_numbers_get_serial_number' ) ) {
+            $decrypted_rows = array();
+            foreach ( $rows as $row ) {
+                try {
+                    $obj = wc_serial_numbers_get_serial_number( (int) $row['id'] );
+                    if ( $obj ) {
+                        $decrypted_rows[] = array(
+                            'serial_key'  => method_exists( $obj, 'get_serial_key' ) ? $obj->get_serial_key() : ( is_object( $obj ) ? $obj->serial_key : $row['serial_key'] ),
+                            'product_id'  => $row['product_id'],
+                            'order_id'    => $row['order_id'],
+                            'validity'    => $row['validity'] ?? '',
+                            'expire_date' => $row['expire_date'] ?? '',
+                        );
+                        Hutch_SMS_Logger::debug( "[Voucher] Fetched row id={$row['id']} via wc_serial_numbers_get_serial_number — decrypted." );
+                    } else {
+                        $row['serial_key'] = self::decrypt_serial( $row['serial_key'] );
+                        $decrypted_rows[]  = $row;
+                    }
+                } catch ( \Exception $e ) {
+                    $row['serial_key'] = self::decrypt_serial( $row['serial_key'] );
+                    $decrypted_rows[]  = $row;
+                }
+            }
+            return $decrypted_rows;
+        }
+
+        // Last resort: decrypt manually
         foreach ( $rows as &$row ) {
             $row['serial_key'] = self::decrypt_serial( $row['serial_key'] ?? '' );
         }
-
-        return $rows ?: array();
+        return $rows;
     }
 
     /**
      * Decrypt a PluginEver-encrypted serial key.
-     *
-     * PluginEver encrypts serials using AES-256-CBC before storing in the DB.
-     * We try their own decryption classes first, then fall back to manual decryption.
+     * Tries all known PluginEver decryption surfaces before manual AES.
      */
     private static function decrypt_serial( string $raw ): string {
         if ( empty( $raw ) ) return $raw;
 
-        // Method 1: PluginEver v1 encryption class
+        // PluginEver v1 encryption class
         if ( class_exists( 'WC_Serial_Numbers_Encryption' ) && method_exists( 'WC_Serial_Numbers_Encryption', 'decrypt' ) ) {
             $dec = WC_Serial_Numbers_Encryption::decrypt( $raw );
             if ( $dec && $dec !== $raw ) {
-                Hutch_SMS_Logger::debug( "[Voucher] Decrypted via WC_Serial_Numbers_Encryption." );
+                Hutch_SMS_Logger::debug( '[Voucher] Decrypted via WC_Serial_Numbers_Encryption.' );
                 return $dec;
             }
         }
 
-        // Method 2: PluginEver v2 encryption class
+        // PluginEver v2 encryption class
         if ( class_exists( 'WooCommerce_Serial_Numbers\Encryption' ) && method_exists( 'WooCommerce_Serial_Numbers\Encryption', 'decrypt' ) ) {
             $dec = \WooCommerce_Serial_Numbers\Encryption::decrypt( $raw );
             if ( $dec && $dec !== $raw ) {
-                Hutch_SMS_Logger::debug( "[Voucher] Decrypted via WooCommerce_Serial_Numbers\\Encryption." );
+                Hutch_SMS_Logger::debug( '[Voucher] Decrypted via WooCommerce_Serial_Numbers\\Encryption.' );
                 return $dec;
             }
         }
 
-        // Method 3: helper function
+        // PluginEver helper function
         if ( function_exists( 'wc_serial_numbers_decrypt' ) ) {
             $dec = wc_serial_numbers_decrypt( $raw );
             if ( $dec && $dec !== $raw ) return $dec;
         }
 
-        // Method 4: manual AES-256-CBC matching PluginEver's scheme
-        $dec = self::aes_decrypt( $raw );
-        if ( $dec !== false ) {
-            Hutch_SMS_Logger::debug( "[Voucher] Decrypted via manual AES-256-CBC." );
-            return $dec;
+        // Manual AES-256-CBC — try multiple key derivations
+        foreach ( self::aes_key_candidates() as $key ) {
+            $dec = self::aes_decrypt_with_key( $raw, $key );
+            if ( $dec !== false ) {
+                Hutch_SMS_Logger::debug( '[Voucher] Decrypted via manual AES-256-CBC.' );
+                return $dec;
+            }
         }
 
-        Hutch_SMS_Logger::debug( "[Voucher] Warning: could not decrypt serial key — sending raw value." );
+        Hutch_SMS_Logger::debug( '[Voucher] Warning: could not decrypt serial key — sending raw value.' );
         return $raw;
     }
 
     /**
-     * Manual AES-256-CBC decrypt using WordPress AUTH_KEY as the encryption key base.
-     * PluginEver stores: base64( IV[16 bytes] . ciphertext )
+     * Returns candidate 32-byte AES keys derived from WordPress secret keys.
+     * PluginEver may use any of these as its encryption key base.
      */
-    private static function aes_decrypt( string $encoded ) {
+    private static function aes_key_candidates(): array {
+        $keys = array();
+
+        // PluginEver uses wp_salt() to derive its encryption key
+        if ( function_exists( 'wp_salt' ) ) {
+            $keys[] = substr( hash( 'sha256', wp_salt( 'auth' ),        true ), 0, 32 );
+            $keys[] = substr( hash( 'sha256', wp_salt( 'secure_auth' ), true ), 0, 32 );
+            $keys[] = substr( hash( 'sha256', wp_salt( 'logged_in' ),   true ), 0, 32 );
+            $keys[] = substr( wp_salt( 'auth' ),                               0, 32 );
+        }
+
+        // Raw WordPress secret constants
+        foreach ( array( 'AUTH_KEY', 'SECURE_AUTH_KEY', 'LOGGED_IN_KEY', 'SECRET_KEY' ) as $const ) {
+            if ( defined( $const ) ) {
+                $keys[] = substr( hash( 'sha256', constant( $const ), true ), 0, 32 );
+                $keys[] = substr( constant( $const ),                         0, 32 );
+            }
+        }
+
+        return array_unique( $keys );
+    }
+
+    /**
+     * AES-256-CBC decrypt. PluginEver stores: base64( IV[16 bytes] . ciphertext )
+     */
+    private static function aes_decrypt_with_key( string $encoded, string $key ) {
         if ( ! function_exists( 'openssl_decrypt' ) ) return false;
 
-        $wp_key = defined( 'AUTH_KEY' ) ? AUTH_KEY : ( defined( 'SECURE_AUTH_KEY' ) ? SECURE_AUTH_KEY : '' );
-        if ( empty( $wp_key ) ) return false;
-
-        $key     = substr( hash( 'sha256', $wp_key, true ), 0, 32 );
         $decoded = base64_decode( $encoded, true );
         if ( $decoded === false || strlen( $decoded ) <= 16 ) return false;
 
@@ -290,8 +418,6 @@ class Hutch_SMS_Voucher {
         return ( $result !== false && $result !== '' ) ? $result : false;
     }
 
-
-    // ─────────────────────────────────────────────────────────────────
     // Message builder
     // ─────────────────────────────────────────────────────────────────
 
