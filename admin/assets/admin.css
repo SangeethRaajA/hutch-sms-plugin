@@ -72,6 +72,10 @@
 .hutch-notice.error   { background: #f8d7da; color: #721c24; border-left: 4px solid var(--error); }
 .hutch-notice.warning { background: #fff3cd; color: #856404; border-left: 4px solid var(--warning); }
 
+/* ── Promo page ─────────────────────────────────────────── */
+.hutch-page-desc { color: #6c757d; margin-top: -8px; margin-bottom: 20px; font-size: 13px; }
+.promo-contact-count { display: inline-block; background: #e8f5e9; color: #2e7d32; padding: 4px 12px; border-radius: 12px; font-weight: 700; font-size: 13px; margin-left: 8px; }
+
 /* ── Token status ────────────────────────────────────────── */
 .token-status { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 6px; font-size: 13px; margin-top: 8px; }
 .token-status.valid   { background: #d4edda; color: #155724; }
