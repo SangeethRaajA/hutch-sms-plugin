@@ -138,6 +138,31 @@
 
         <?php endif; ?>
 
+        <!-- ── XStore / Payment Gateway Settings ── -->
+        <div class="hutch-box">
+            <h2>XStore & Payment Gateway Settings</h2>
+            <p>
+                XStore's checkout sends orders through standard WooCommerce — the plugin hooks into multiple order events
+                to ensure SMS fires regardless of payment method. Configure which gateways are "offline" (COD, bank transfer)
+                so the correct hook is used.
+            </p>
+            <table class="form-table">
+                <tr>
+                    <th><label for="hs-offline-methods">Offline Payment Method IDs</label></th>
+                    <td>
+                        <input type="text" id="hs-offline-methods" name="hutch_sms_offline_methods"
+                               value="<?php echo esc_attr( get_option( 'hutch_sms_offline_methods', 'bacs,cheque,cod' ) ); ?>">
+                        <p class="description">
+                            Comma-separated WooCommerce payment method IDs that <strong>do not</strong> trigger
+                            <code>woocommerce_payment_complete</code>. Default: <code>bacs,cheque,cod</code>.<br>
+                            You can find a gateway's ID in <strong>WooCommerce → Settings → Payments</strong>.
+                            For these methods, the SMS fires immediately at checkout submission instead of waiting for payment confirmation.
+                        </p>
+                    </td>
+                </tr>
+            </table>
+        </div>
+
         <!-- ── Developer Options ── -->
         <div class="hutch-box">
             <h2>Developer Options</h2>

@@ -19,7 +19,8 @@ class Hutch_SMS_Admin {
         add_action( 'admin_post_hutch_sms_preview_contacts', array( __CLASS__, 'handle_preview_contacts' ) );
         add_action( 'admin_post_hutch_sms_clear_logs',       array( __CLASS__, 'handle_clear_logs' ) );
         add_action( 'admin_post_hutch_sms_clear_debug',      array( __CLASS__, 'handle_clear_debug' ) );
-        add_action( 'admin_post_hutch_sms_test_login',       array( __CLASS__, 'handle_test_login' ) );
+        add_action( 'admin_post_hutch_sms_test_login',        array( __CLASS__, 'handle_test_login' ) );
+        add_action( 'admin_post_hutch_sms_diagnose_order',   array( __CLASS__, 'handle_diagnose_order' ) );
     }
 
     // ──────────────────────────────────────────────────────────
@@ -48,6 +49,7 @@ class Hutch_SMS_Admin {
         $opts = array(
             'hutch_sms_username', 'hutch_sms_password', 'hutch_sms_mask',
             'hutch_sms_debug',
+            'hutch_sms_offline_methods',
             // Order SMS
             'hutch_sms_enable_order_confirm', 'hutch_sms_enable_order_complete',
             'hutch_sms_msg_order_confirm', 'hutch_sms_msg_order_complete',
@@ -57,6 +59,12 @@ class Hutch_SMS_Admin {
         foreach ( $opts as $opt ) {
             register_setting( 'hutch_sms_settings', $opt );
         }
+
+        // Wire the offline methods option into the WooCommerce class filter
+        add_filter( 'hutch_sms_offline_payment_methods', function() {
+            $raw = get_option( 'hutch_sms_offline_methods', 'bacs,cheque,cod' );
+            return array_filter( array_map( 'trim', explode( ',', $raw ) ) );
+        } );
     }
 
     // ──────────────────────────────────────────────────────────
@@ -279,6 +287,52 @@ class Hutch_SMS_Admin {
         }
 
         wp_safe_redirect( admin_url( 'admin.php?page=hutch-sms-debug' ) ); exit;
+    }
+
+    public static function handle_diagnose_order() {
+        check_admin_referer( 'hutch_sms_diagnose_order' );
+        if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Unauthorized' );
+
+        $order_id = (int) ( $_POST['diag_order_id'] ?? 0 );
+        $order    = $order_id ? wc_get_order( $order_id ) : null;
+
+        if ( ! $order || ! is_a( $order, 'WC_Order' ) ) {
+            set_transient( 'hutch_sms_diag_result', array(
+                'order_id'    => $order_id,
+                'order_found' => false,
+            ), 120 );
+            wp_safe_redirect( admin_url( 'admin.php?page=hutch-sms-debug' ) );
+            exit;
+        }
+
+        // Gather all phone sources
+        $phone_raw    = $order->get_billing_phone();
+        $phone_meta   = $order->get_meta( '_billing_phone', true );
+        $phone_user   = $order->get_customer_id() ? get_user_meta( $order->get_customer_id(), 'billing_phone', true ) : '';
+
+        // Pick best available raw phone
+        $best_raw = $phone_raw ?: $phone_meta ?: $phone_user ?: '';
+        $phone_normalised = $best_raw ? Hutch_SMS_WooCommerce::normalise_phone( $best_raw ) : '';
+
+        set_transient( 'hutch_sms_diag_result', array(
+            'order_id'             => $order_id,
+            'order_found'          => true,
+            'status'               => $order->get_status(),
+            'payment_method'       => $order->get_payment_method(),
+            'payment_method_title' => $order->get_payment_method_title(),
+            'phone_raw'            => $phone_raw,
+            'phone_meta'           => $phone_meta,
+            'phone_user'           => $phone_user,
+            'phone_normalised'     => $phone_normalised,
+            'first_name'           => $order->get_billing_first_name(),
+            'last_name'            => $order->get_billing_last_name(),
+            'billing_email'        => $order->get_billing_email(),
+            'customer_id'          => $order->get_customer_id(),
+            'total'                => strip_tags( $order->get_formatted_order_total() ),
+        ), 120 );
+
+        wp_safe_redirect( admin_url( 'admin.php?page=hutch-sms-debug' ) );
+        exit;
     }
 
     // ──────────────────────────────────────────────────────────
