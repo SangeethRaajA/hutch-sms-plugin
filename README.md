@@ -2,6 +2,19 @@
 A custom WordPress plugin that integrates the Hutch SMS API with WooCommerce to send automated SMS notifications to customers on order confirmation, order completion, and gift voucher serial key delivery.
 
 ## Version History
+## [1.3.0] — 2026-03-05
+ 
+### Added
+- XStore theme compatibility via multi-hook architecture
+- Hooks: `woocommerce_order_status_processing`, `woocommerce_payment_complete`, `woocommerce_order_status_on-hold`, `woocommerce_checkout_order_processed`
+- Deduplication transient system — prevents duplicate SMS when multiple hooks fire for the same order
+- Fallback phone lookup: order meta (`_billing_phone`) → user meta (`billing_phone`) — handles cases where XStore checkout doesn't populate standard billing phone field
+- Order Diagnostic Tool in Debug Tools — inspects any order ID and shows: status, payment method, phone (raw/meta/user/normalised), SMS enable flags, dedup state, and a plain-English summary
+- HPOS detection in Plugin Info panel
+- XStore theme detection in Plugin Info panel
+### Fixed
+- WooCommerce 8+ compatibility — replaced deprecated direct `WP_Post` order access with `wc_get_order()`
+- Phone normalisation now handles all Sri Lankan formats: `07XXXXXXXX`, `947XXXXXXXX`, `+947XXXXXXXX`, `0094XXXXXXXXX`
 
 ## [1.2.0] — 2026-03-04
 ### Added
@@ -17,7 +30,6 @@ A custom WordPress plugin that integrates the Hutch SMS API with WooCommerce to 
 - Promotional/bulk SMS feature — send to filtered customer segments
 - Customer filters: minimum order count, date range, specific product purchased
 - Bulk send view with live preview of recipient count
-
 ### Fixed
 - WooCommerce 8+ compatibility with HPOS (High-Performance Order Storage)
 - Phone normalisation edge cases for IDD prefix format (`0094...`)
