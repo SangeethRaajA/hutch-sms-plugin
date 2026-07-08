@@ -3,7 +3,7 @@
  * Plugin Name: Hutch Bulk SMS
  * Plugin URI:  https://bsms.hutch.lk
  * Description: Send individual and bulk SMS messages via Hutch Bulk SMS API. Supports WooCommerce order notifications, gift voucher serial delivery, and promotional campaigns.
- * Version:     1.4.1
+ * Version:     1.4.2
  * Author:      Sangeeth
  * Author URI:  #
  * License:     GPL-2.0+
@@ -12,7 +12,7 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'HUTCH_SMS_VERSION', '1.4.1' );
+define( 'HUTCH_SMS_VERSION', '1.4.2' );
 define( 'HUTCH_SMS_FILE',    __FILE__ );
 define( 'HUTCH_SMS_DIR',     plugin_dir_path( __FILE__ ) );
 define( 'HUTCH_SMS_URL',     plugin_dir_url( __FILE__ ) );

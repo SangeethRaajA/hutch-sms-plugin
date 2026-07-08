@@ -109,16 +109,65 @@ class Hutch_SMS_Voucher {
         }
     }
 
+
     // ─────────────────────────────────────────────────────────────────
     // PluginEver Serial Numbers query — table: wp_serial_numbers
     // ─────────────────────────────────────────────────────────────────
 
     private static function get_serials( int $order_id, int $item_id, int $product_id ): array {
-        // Try PluginEver's own query API first
+        // Try PluginEver v2+ Serial Object API first (returns decrypted keys)
+        $rows = self::get_via_serial_object_api( $order_id, $product_id );
+        if ( ! empty( $rows ) ) return $rows;
+
+        // Try legacy WC_Serial_Numbers_Query API
         if ( class_exists( 'WC_Serial_Numbers_Query' ) ) {
-            return self::get_via_plugin_api( $order_id, $product_id );
+            $rows = self::get_via_plugin_api( $order_id, $product_id );
+            if ( ! empty( $rows ) ) return $rows;
         }
+
+        // Fallback: direct DB query + decrypt
         return self::get_via_db( $order_id, $item_id, $product_id );
+    }
+
+    /**
+     * PluginEver v2+ uses namespaced Serial model objects which return decrypted keys.
+     */
+    private static function get_via_serial_object_api( int $order_id, int $product_id ): array {
+        $classes = array(
+            'WooCommerce_Serial_Numbers\Models\Serial',
+            'WC_Serial_Numbers\Models\Serial',
+        );
+        $class = null;
+        foreach ( $classes as $c ) {
+            if ( class_exists( $c ) ) { $class = $c; break; }
+        }
+        if ( ! $class ) return array();
+
+        try {
+            $results = $class::get(
+                array(
+                    'order_id'   => $order_id,
+                    'product_id' => $product_id,
+                    'status'     => 'sold',
+                    'limit'      => -1,
+                ),
+                'objects'
+            );
+            if ( empty( $results ) ) return array();
+            Hutch_SMS_Logger::debug( "[Voucher] Serial Object API: order=$order_id product=$product_id => " . count( $results ) . " rows." );
+            return array_map( function( $obj ) {
+                return array(
+                    'serial_key'  => method_exists( $obj, 'get_serial_key' ) ? $obj->get_serial_key() : ( $obj->serial_key ?? '' ),
+                    'product_id'  => $obj->product_id ?? 0,
+                    'order_id'    => $obj->order_id ?? 0,
+                    'validity'    => $obj->validity ?? '',
+                    'expire_date' => $obj->expire_date ?? '',
+                );
+            }, $results );
+        } catch ( \Exception $e ) {
+            Hutch_SMS_Logger::debug( "[Voucher] Serial Object API error: " . $e->getMessage() );
+            return array();
+        }
     }
 
     private static function get_via_plugin_api( int $order_id, int $product_id ): array {
@@ -130,10 +179,14 @@ class Hutch_SMS_Voucher {
                 'return'     => 'all',
             ) );
             $results = $query->get_serial_numbers();
-            Hutch_SMS_Logger::debug( "[Voucher] PluginEver API: order=$order_id product=$product_id → " . count( $results ) . " rows." );
-            return array_map( fn( $r ) => is_object( $r ) ? (array) $r : $r, $results );
+            Hutch_SMS_Logger::debug( "[Voucher] PluginEver Legacy API: order=$order_id product=$product_id => " . count( $results ) . " rows." );
+            $rows = array_map( fn( $r ) => is_object( $r ) ? (array) $r : $r, $results );
+            foreach ( $rows as &$row ) {
+                $row['serial_key'] = self::decrypt_serial( $row['serial_key'] ?? '' );
+            }
+            return $rows;
         } catch ( \Exception $e ) {
-            Hutch_SMS_Logger::debug( "[Voucher] PluginEver API error: " . $e->getMessage() );
+            Hutch_SMS_Logger::debug( "[Voucher] PluginEver Legacy API error: " . $e->getMessage() );
             return array();
         }
     }
@@ -161,9 +214,82 @@ class Hutch_SMS_Voucher {
             ), ARRAY_A );
         }
 
-        Hutch_SMS_Logger::debug( "[Voucher] DB query wp_serial_numbers: order=$order_id → " . count( $rows ) . " rows. Error: " . ( $wpdb->last_error ?: 'none' ) );
+        $sample = isset( $rows[0]['serial_key'] ) ? substr( $rows[0]['serial_key'], 0, 20 ) . '...' : 'none';
+        Hutch_SMS_Logger::debug( "[Voucher] DB query: order=$order_id => " . count( $rows ) . " rows. Raw sample: $sample. Error: " . ( $wpdb->last_error ?: 'none' ) );
+
+        // PluginEver stores serial_key encrypted — decrypt before use
+        foreach ( $rows as &$row ) {
+            $row['serial_key'] = self::decrypt_serial( $row['serial_key'] ?? '' );
+        }
+
         return $rows ?: array();
     }
+
+    /**
+     * Decrypt a PluginEver-encrypted serial key.
+     *
+     * PluginEver encrypts serials using AES-256-CBC before storing in the DB.
+     * We try their own decryption classes first, then fall back to manual decryption.
+     */
+    private static function decrypt_serial( string $raw ): string {
+        if ( empty( $raw ) ) return $raw;
+
+        // Method 1: PluginEver v1 encryption class
+        if ( class_exists( 'WC_Serial_Numbers_Encryption' ) && method_exists( 'WC_Serial_Numbers_Encryption', 'decrypt' ) ) {
+            $dec = WC_Serial_Numbers_Encryption::decrypt( $raw );
+            if ( $dec && $dec !== $raw ) {
+                Hutch_SMS_Logger::debug( "[Voucher] Decrypted via WC_Serial_Numbers_Encryption." );
+                return $dec;
+            }
+        }
+
+        // Method 2: PluginEver v2 encryption class
+        if ( class_exists( 'WooCommerce_Serial_Numbers\Encryption' ) && method_exists( 'WooCommerce_Serial_Numbers\Encryption', 'decrypt' ) ) {
+            $dec = \WooCommerce_Serial_Numbers\Encryption::decrypt( $raw );
+            if ( $dec && $dec !== $raw ) {
+                Hutch_SMS_Logger::debug( "[Voucher] Decrypted via WooCommerce_Serial_Numbers\\Encryption." );
+                return $dec;
+            }
+        }
+
+        // Method 3: helper function
+        if ( function_exists( 'wc_serial_numbers_decrypt' ) ) {
+            $dec = wc_serial_numbers_decrypt( $raw );
+            if ( $dec && $dec !== $raw ) return $dec;
+        }
+
+        // Method 4: manual AES-256-CBC matching PluginEver's scheme
+        $dec = self::aes_decrypt( $raw );
+        if ( $dec !== false ) {
+            Hutch_SMS_Logger::debug( "[Voucher] Decrypted via manual AES-256-CBC." );
+            return $dec;
+        }
+
+        Hutch_SMS_Logger::debug( "[Voucher] Warning: could not decrypt serial key — sending raw value." );
+        return $raw;
+    }
+
+    /**
+     * Manual AES-256-CBC decrypt using WordPress AUTH_KEY as the encryption key base.
+     * PluginEver stores: base64( IV[16 bytes] . ciphertext )
+     */
+    private static function aes_decrypt( string $encoded ) {
+        if ( ! function_exists( 'openssl_decrypt' ) ) return false;
+
+        $wp_key = defined( 'AUTH_KEY' ) ? AUTH_KEY : ( defined( 'SECURE_AUTH_KEY' ) ? SECURE_AUTH_KEY : '' );
+        if ( empty( $wp_key ) ) return false;
+
+        $key     = substr( hash( 'sha256', $wp_key, true ), 0, 32 );
+        $decoded = base64_decode( $encoded, true );
+        if ( $decoded === false || strlen( $decoded ) <= 16 ) return false;
+
+        $iv         = substr( $decoded, 0, 16 );
+        $ciphertext = substr( $decoded, 16 );
+        $result     = openssl_decrypt( $ciphertext, 'AES-256-CBC', $key, OPENSSL_RAW_DATA, $iv );
+
+        return ( $result !== false && $result !== '' ) ? $result : false;
+    }
+
 
     // ─────────────────────────────────────────────────────────────────
     // Message builder
@@ -175,11 +301,36 @@ class Hutch_SMS_Voucher {
             'Hi {first_name}, your gift voucher is: {serial}. Valid until: {expire_date}. Order #{order_id}. - Nadiyas'
         );
 
-        $expire = $serial['expire_date'] ?? '';
-        if ( $expire && $expire !== '0000-00-00 00:00:00' ) {
-            $expire = date( 'd M Y', strtotime( $expire ) );
+        // ── Resolve validity / expire_date ────────────────────────────
+        // Priority:
+        //   1. expire_date is a real datetime   → format as "d M Y"
+        //   2. validity column has a number     → use as-is (e.g. "180")
+        //   3. PluginEver product meta          → _serial_numbers_validity
+        //   4. Nothing found                    → "N/A"
+
+        $expire_raw = trim( (string) ( $serial['expire_date'] ?? '' ) );
+        $validity   = trim( (string) ( $serial['validity']    ?? '' ) );
+
+        $has_expire   = $expire_raw && ! in_array( $expire_raw, array( '', '0000-00-00 00:00:00', 'NULL' ), true );
+        $has_validity = $validity   && ! in_array( $validity,   array( '', 'NULL' ), true ) && is_numeric( $validity );
+
+        if ( $has_expire ) {
+            $expire_display   = date( 'd M Y', strtotime( $expire_raw ) );
+            $validity_display = $expire_display;
+        } elseif ( $has_validity ) {
+            $expire_display   = $validity;          // just the number — template already says "days"
+            $validity_display = $validity;
         } else {
-            $expire = ! empty( $serial['validity'] ) ? $serial['validity'] : 'No expiry';
+            // Final fallback: read validity from the WooCommerce product meta set by PluginEver
+            $product_id      = (int) $item->get_product_id();
+            $meta_validity   = get_post_meta( $product_id, '_serial_numbers_validity', true );
+            if ( $meta_validity && is_numeric( $meta_validity ) ) {
+                $expire_display   = $meta_validity;
+                $validity_display = $meta_validity;
+            } else {
+                $expire_display   = 'N/A';
+                $validity_display = 'N/A';
+            }
         }
 
         return str_replace(
@@ -189,8 +340,8 @@ class Hutch_SMS_Voucher {
                 $serial['serial_key'],
                 $item->get_name(),
                 $order->get_order_number(),
-                $expire,
-                ! empty( $serial['validity'] ) ? $serial['validity'] : 'No expiry',
+                $expire_display,
+                $validity_display,
                 $order->get_billing_first_name(),
             ),
             $template
